@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>ATL Uber</title>
+<link rel="stylesheet" href="src/d3.css"/>
+
+<link href="./src/bootstrap.min.css" rel="stylesheet"
+      integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+
+<style>
+    .background {
+        fill: #333;
+        pointer-events: all;
+    }
+
+    .map-layer {
+        fill: #fff;
+        stroke: #ccc;
+    }
+
+    .effect-layer {
+        pointer-events: none;
+    }
+
+    text {
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-weight: 300;
+    }
+
+    text.big-text {
+        font-size: 30px;
+        font-weight: 400;
+    }
+
+    .effect-layer text,
+    text.dummy-text {
+        font-size: 12px;
+    }
+
+    .text {
+        display: inline-block;
+        color: #fff;
+    }
+
+    .inputtext {
+        display: inline-block;
+    }
+    .slider {
+        margin-left: 20px;
+        margin-right: 40px;
+        width: 75%;
+        display: inline-block;
+    }
+    .month {
+        color: #fff;
+
+    }
+
+    .d3-tip {
+      line-height: 1;
+      font-weight: bold;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      border-radius: 2px;
+    }
+    /* Creates a small triangle extender for the tooltip */
+    .d3-tip:after {
+      box-sizing: border-box;
+      display: inline;
+      font-size: 10px;
+      width: 100%;
+      line-height: 1;
+      color: rgba(0, 0, 0, 0.8);
+      content: "\25BC";
+      position: absolute;
+      text-align: center;
+    }
+
+    /* Style northward tooltips differently */
+    .d3-tip.n:after {
+      margin: -1px 0 0 0;
+      top: 100%;
+      left: 0;
+    }
+</style>
+
+<body style="background-color:#333;" class="text-center">
+
+
+<form action="/visualization" method="post">
+    <p style="color: #fff;">Please input the origin and destination ID. We will predict the current estimated travel
+        time.</p>
+    <label class="text">Origin: </label>
+
+    <input class="inputtext" type="text" name="input_origin" placeholder="from 0 to 830"/>
+    <label class="text">Destination: </label>
+    <input class="inputtext" type="text" name="input_dest" placeholder="from 0 to 830"/>
+
+    <button>Submit</button>
+</form>
+<h3 style="color: white;"><%= distanceVar %></h3>
+<br>
+<label class="month">Please select a month: </label>
+<div class= "slider " style="color: #fff"  id="slider1"></div>
+<br>
+<svg></svg>
+<script src="https://d3js.org/d3.v3.min.js"></script>
+<script src="src/d3-tip.min.js"></script>
+<script src="src/d3.slider.js"></script>
+
+
+<script>
+
+    var month = 1;
+    var id = '141';
+    var ftr;
+
+    var width = 1900,
+        height = 1700,
+        centered;
+
+    // Define color scale
+    var color = d3.scale.linear()
+        .domain([1, 20])
+        .clamp(true)
+        .range(['#fff', '#000080']);
+
+    var projection = d3.geo.mercator()
+        .scale(65000)
+        // Center the Map
+        .center([-84, 33.7])
+        .translate([width *0.7, height / 2]);
+
+    var path = d3.geo.path()
+        .projection(projection);
+
+    // Set svg width & height
+    var svg = d3.select('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+    // Add background
+    svg.append('rect')
+        .attr('class', 'background')
+        .attr('width', width)
+        .attr('height', height)
+        .on('click', clicked);
+
+    var g = svg.append('g');
+
+    var effectLayer = g.append('g')
+        .classed('effect-layer', true);
+
+    var mapLayer = g.append('g')
+        .classed('map-layer', true);
+
+    var dummyText = g.append('text')
+        .classed('dummy-text', true)
+        .attr('x', 10)
+        .attr('y', 30)
+        .style('opacity', 0);
+
+    var bigText = g.append('text')
+        .classed('big-text', true)
+        .attr('x', 20)
+        .attr('y', 45);
+
+    var colorMap = new Map();
+
+    var size = 20;
+    // todo: needs to change the legend keys
+    var legend_keys = ["<8min", "8-15min", "16-25min", "26-35min", ">35min", "Data Not Provided"]
+    var legend_color = ["#fffcdc","#c4f0a0",'#8cd4bc','#55bcc4','#287cb4','#2464ac']
+    var lineLegend = svg.selectAll(".lineLegend").data(legend_keys)
+        .enter().append("svg")
+        .attr("class", "lineLegend")
+        .attr("transform", function (d, i) {
+            return "translate(" + width + "," + (i * 0) + ")";
+        });
+
+    lineLegend.append("text").text(function (d) {
+        return d;
+    })
+        .attr("x", 85)
+        .attr("y", function (d, i) {
+            return 105 + i * (size + 5)
+        })
+        .attr("transform", "translate(15,9)") //align texts with boxes
+    .style("fill", "#fff");
+
+    lineLegend.append("rect")
+        .attr("fill", function (d, i) {
+          return legend_color[i];
+        })
+        .attr("x", 70)
+        .attr("y", function (d, i) {
+            return 100 + i * (size + 5)
+        })
+        .attr("width", 20)
+        .attr("height", 15);
+
+    tripData = d3.tsv('../data/2019_1.tsv', function (d) {
+
+        d.forEach(function (d) {
+            if (d.sourceid === '141') {
+                var regionArr = d.dstid.split(', ');
+                regionArr.forEach(function (dd) {
+                    colorMap.set(dd, d.color);
+                });
+            }
+        })
+    });
+
+    var tip = d3.tip()
+                .attr('class', 'd3-tip')
+                .style("opacity",70)
+                .style("background-color", "grey")
+                .style("border", "solid")
+                .style("border-width", "2px")
+                .style("border-radius", "10px")
+                .offset([0, 15])
+                .html(function(d) {
+                    var ID = d.properties.MOVEMENT_ID;
+                    return"<p>ID: " + ID +"</p>"
+                })
+
+    svg.call(tip);
+
+    //slider
+    //load color data
+    d3.select('#slider1').call(
+        d3.slider().axis(true).min(1).max(12).step(1).snap(true)
+            .on("slide", function (evt, value) {
+                colorMap.clear();
+                var tripData = d3.tsv('../data/2019_' + value + '.tsv', function (d) {
+                    console.log(value);
+                    month = value;
+                    d.forEach(function (d) {
+                        if (d.sourceid === id) {
+                            var regionArr = d.dstid.split(', ');
+                            regionArr.forEach(function (dd) {
+                                colorMap.set(dd, d.color);
+                            });
+                        }
+                    })
+                });
+                return tripData;
+
+            })
+    );
+
+
+    // Load map data
+    d3.json('../data/atl.json', function (error, mapData) {
+        var features = mapData.features;
+        ftr = features;
+        // Update color scale domain based on data
+        color.domain([0, 20]);
+        // Draw each province as a path
+        mapLayer.selectAll('path')
+            .data(features)
+            .enter().append('path')
+            .attr('d', path)
+            .attr('vector-effect', 'non-scaling-stroke')
+            .style('fill', fillFn)
+            .on('mouseover', mouseover)
+            .on('mouseout', mouseout)
+            .on('click', clicked);
+    });
+
+    //Get color
+    function fillFn(d) {
+        var tmp = colorMap.get(d.properties.MOVEMENT_ID);
+        if (tmp === '1') {
+            return '#fffcdc';
+        } else if (tmp === '2') {
+            return '#c4f0a0';
+        } else if (tmp === '3') {
+            return '#8cd4bc';
+        } else if (tmp === '4') {
+            return '#55bcc4';
+        } else if (tmp === '5') {
+            return '#287cb4';
+        } else {
+            return '#2464ac';
+        }
+    }
+
+    //change clicked region color and zoom in
+    function clicked(d) {
+        var x, y, k;
+        id = d.properties.MOVEMENT_ID;
+        // Compute centroid of the selected path
+        if (d && centered !== d) {
+            colorMap.clear();   //clearMap
+            var centroid = path.centroid(d);
+            x = centroid[0];
+            y = centroid[1];
+            k = 2;
+            centered = d;
+            d3.tsv('../data/2019_' + month + '.tsv', function(e){
+
+                e.forEach(function(dd){
+                    if(dd.sourceid === d.properties.MOVEMENT_ID){
+                        var regionArr = dd.dstid.split(', ');
+                        regionArr.forEach(function(ddd){
+                            colorMap.set(ddd, dd.color);
+                        });
+                    }
+                });
+            });
+            // dye the map layer according to the new colorMap
+            mapLayer.selectAll("path")
+                    .data(ftr)
+                    .enter().append('path')
+                    .attr('vector-effect', 'non-scaling-stroke')
+                    .style('fill',fillFn);
+        } else {
+            x = width / 2;
+            y = height / 2;
+            k = 1;
+            centered = null;
+        }
+
+        // Highlight the clicked area
+        mapLayer.selectAll('path')
+            .style('fill', function (d) {
+                return centered && d === centered ? '#D5708B' : fillFn(d);
+            });
+
+        //Zoom
+        // g.transition()
+        //     .duration(750)
+        //     .attr('transform', 'translate(' + width / 2 + ',' + height / 2 + ')scale(' + k + ')translate(' + -x + ',' + -y + ')');
+    }
+
+    function mouseover(d) {
+        // Highlight hovered area
+        tip.show(d,this);
+        d3.select(this).style('fill', 'orange');
+    }
+
+    function mouseout(d) {
+        // Reset color
+        tip.hide(d,this);
+        mapLayer.selectAll('path')
+            .style('fill', function (d) {
+                return centered && d === centered ? '#fffcdc' : fillFn(d);
+            });
+
+        // Remove effect text
+        effectLayer.selectAll('text').transition()
+            .style('opacity', 0)
+            .remove();
+
+        // Clear province name
+        bigText.text('');
+
+
+    }
+
+</script>
+</body>
